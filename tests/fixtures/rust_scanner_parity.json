@@ -1,0 +1,470 @@
+[
+  {
+    "records": [
+      {
+        "type": "turn_context",
+        "timestamp": "t1",
+        "payload": {
+          "turn_id": "1",
+          "model": "gpt-6-astra",
+          "collaboration_mode": {
+            "settings": {
+              "reasoning_effort": "max"
+            }
+          }
+        }
+      },
+      {
+        "type": "event_msg",
+        "timestamp": "c1",
+        "payload": {
+          "type": "token_count",
+          "info": {
+            "model_context_window": 258400
+          }
+        }
+      },
+      {
+        "type": "turn_context",
+        "timestamp": "t2",
+        "payload": {
+          "turn_id": "2",
+          "model": "gpt-5.5",
+          "collaboration_mode": {
+            "settings": {
+              "reasoning_effort": "high"
+            }
+          }
+        }
+      },
+      {
+        "type": "event_msg",
+        "timestamp": "c2",
+        "payload": {
+          "type": "token_count",
+          "info": {
+            "model_context_window": 128000
+          }
+        }
+      }
+    ],
+    "evidence": [
+      {
+        "ts": "t2",
+        "kind": "silent_model_change",
+        "severity": "hard",
+        "detail": "model gpt-6-astra → gpt-5.5 with no settings change (downgrade)",
+        "turn_id": "2",
+        "usage_percent": null,
+        "why": "older generation (5.5 vs 6)"
+      },
+      {
+        "ts": "t2",
+        "kind": "silent_effort_change",
+        "severity": "hard",
+        "detail": "reasoning effort max → high with no settings change",
+        "turn_id": "2",
+        "usage_percent": null
+      },
+      {
+        "ts": "c2",
+        "kind": "context_window_change",
+        "severity": "hard",
+        "detail": "model context window 258400 → 128000",
+        "turn_id": null,
+        "usage_percent": null
+      }
+    ],
+    "active": [
+      {
+        "ts": "t2",
+        "kind": "silent_model_change",
+        "severity": "hard",
+        "detail": "model gpt-6-astra → gpt-5.5 with no settings change (downgrade)",
+        "turn_id": "2",
+        "usage_percent": null,
+        "why": "older generation (5.5 vs 6)"
+      },
+      {
+        "ts": "t2",
+        "kind": "silent_effort_change",
+        "severity": "hard",
+        "detail": "reasoning effort max → high with no settings change",
+        "turn_id": "2",
+        "usage_percent": null
+      },
+      {
+        "ts": "c2",
+        "kind": "context_window_change",
+        "severity": "hard",
+        "detail": "model context window 258400 → 128000",
+        "turn_id": null,
+        "usage_percent": null
+      }
+    ],
+    "model": "gpt-5.5",
+    "effort": "high",
+    "ctx": 128000,
+    "turns": 2
+  },
+  {
+    "records": [
+      {
+        "type": "event_msg",
+        "timestamp": "s1",
+        "payload": {
+          "type": "thread_settings_applied",
+          "thread_settings": {
+            "model": "gpt-6-astra",
+            "reasoning_effort": "max"
+          }
+        }
+      },
+      {
+        "type": "turn_context",
+        "timestamp": "t1",
+        "payload": {
+          "turn_id": "1",
+          "model": "gpt-6-astra",
+          "collaboration_mode": {
+            "settings": {
+              "reasoning_effort": "max"
+            }
+          }
+        }
+      },
+      {
+        "type": "event_msg",
+        "timestamp": "s2",
+        "payload": {
+          "type": "thread_settings_applied",
+          "thread_settings": {
+            "model": "gpt-5.5",
+            "reasoning_effort": "high"
+          }
+        }
+      },
+      {
+        "type": "turn_context",
+        "timestamp": "t2",
+        "payload": {
+          "turn_id": "2",
+          "model": "gpt-5.5",
+          "collaboration_mode": {
+            "settings": {
+              "reasoning_effort": "high"
+            }
+          }
+        }
+      }
+    ],
+    "evidence": [
+      {
+        "ts": "t2",
+        "kind": "applied_model_change",
+        "severity": "soft",
+        "detail": "thread settings switched model gpt-6-astra → gpt-5.5 (downgrade)",
+        "turn_id": "2",
+        "usage_percent": null,
+        "why": "older generation (5.5 vs 6)"
+      },
+      {
+        "ts": "t2",
+        "kind": "applied_effort_change",
+        "severity": "soft",
+        "detail": "thread settings switched reasoning effort max → high",
+        "turn_id": "2",
+        "usage_percent": null
+      }
+    ],
+    "active": [
+      {
+        "ts": "t2",
+        "kind": "applied_model_change",
+        "severity": "soft",
+        "detail": "thread settings switched model gpt-6-astra → gpt-5.5 (downgrade)",
+        "turn_id": "2",
+        "usage_percent": null,
+        "why": "older generation (5.5 vs 6)"
+      },
+      {
+        "ts": "t2",
+        "kind": "applied_effort_change",
+        "severity": "soft",
+        "detail": "thread settings switched reasoning effort max → high",
+        "turn_id": "2",
+        "usage_percent": null
+      }
+    ],
+    "model": "gpt-5.5",
+    "effort": "high",
+    "ctx": null,
+    "turns": 2
+  },
+  {
+    "records": [
+      {
+        "type": "turn_context",
+        "timestamp": "t1",
+        "payload": {
+          "turn_id": "1",
+          "model": "gpt-6-astra",
+          "collaboration_mode": {
+            "settings": {
+              "reasoning_effort": "max"
+            }
+          }
+        }
+      },
+      {
+        "type": "event_msg",
+        "timestamp": "c1",
+        "payload": {
+          "type": "token_count",
+          "info": {
+            "model_context_window": 258400
+          }
+        }
+      },
+      {
+        "type": "turn_context",
+        "timestamp": "t2",
+        "payload": {
+          "turn_id": "2",
+          "model": "gpt-5.5",
+          "collaboration_mode": {
+            "settings": {
+              "reasoning_effort": "high"
+            }
+          }
+        }
+      },
+      {
+        "type": "event_msg",
+        "timestamp": "c2",
+        "payload": {
+          "type": "token_count",
+          "info": {
+            "model_context_window": 128000
+          }
+        }
+      },
+      {
+        "type": "turn_context",
+        "timestamp": "t3",
+        "payload": {
+          "turn_id": "3",
+          "model": "gpt-6-astra",
+          "collaboration_mode": {
+            "settings": {
+              "reasoning_effort": "max"
+            }
+          }
+        }
+      },
+      {
+        "type": "event_msg",
+        "timestamp": "c3",
+        "payload": {
+          "type": "token_count",
+          "info": {
+            "model_context_window": 258400
+          }
+        }
+      }
+    ],
+    "evidence": [
+      {
+        "ts": "t2",
+        "kind": "silent_model_change",
+        "severity": "hard",
+        "detail": "model gpt-6-astra → gpt-5.5 with no settings change (downgrade)",
+        "turn_id": "2",
+        "usage_percent": null,
+        "why": "older generation (5.5 vs 6)"
+      },
+      {
+        "ts": "t2",
+        "kind": "silent_effort_change",
+        "severity": "hard",
+        "detail": "reasoning effort max → high with no settings change",
+        "turn_id": "2",
+        "usage_percent": null
+      },
+      {
+        "ts": "c2",
+        "kind": "context_window_change",
+        "severity": "hard",
+        "detail": "model context window 258400 → 128000",
+        "turn_id": null,
+        "usage_percent": null
+      },
+      {
+        "ts": "t3",
+        "kind": "silent_model_change",
+        "severity": "good",
+        "detail": "model gpt-5.5 → gpt-6-astra with no settings change (upgrade)",
+        "turn_id": "3",
+        "usage_percent": null,
+        "why": "newer generation (6 vs 5.5)"
+      },
+      {
+        "ts": "t3",
+        "kind": "silent_effort_change",
+        "severity": "soft",
+        "detail": "reasoning effort high → max with no settings change",
+        "turn_id": "3",
+        "usage_percent": null
+      },
+      {
+        "ts": "c3",
+        "kind": "context_window_change",
+        "severity": "info",
+        "detail": "model context window 128000 → 258400",
+        "turn_id": null,
+        "usage_percent": null
+      }
+    ],
+    "active": [
+      {
+        "ts": "t3",
+        "kind": "silent_model_change",
+        "severity": "good",
+        "detail": "model gpt-5.5 → gpt-6-astra with no settings change (upgrade)",
+        "turn_id": "3",
+        "usage_percent": null,
+        "why": "newer generation (6 vs 5.5)"
+      },
+      {
+        "ts": "t3",
+        "kind": "silent_effort_change",
+        "severity": "soft",
+        "detail": "reasoning effort high → max with no settings change",
+        "turn_id": "3",
+        "usage_percent": null
+      }
+    ],
+    "model": "gpt-6-astra",
+    "effort": "max",
+    "ctx": 258400,
+    "turns": 3
+  },
+  {
+    "records": [
+      {
+        "type": "turn_context",
+        "timestamp": "t1",
+        "payload": {
+          "turn_id": "1",
+          "model": "gpt-6.1-sol",
+          "collaboration_mode": {
+            "settings": {
+              "reasoning_effort": "high"
+            }
+          }
+        }
+      },
+      {
+        "type": "event_msg",
+        "timestamp": "c1",
+        "payload": {
+          "type": "token_count",
+          "info": {
+            "model_context_window": 828400
+          }
+        }
+      },
+      {
+        "type": "turn_context",
+        "timestamp": "t2",
+        "payload": {
+          "turn_id": "2",
+          "model": "gpt-6.1-sol",
+          "collaboration_mode": {
+            "settings": {
+              "reasoning_effort": "high"
+            }
+          }
+        }
+      }
+    ],
+    "evidence": [],
+    "active": [],
+    "model": "gpt-6.1-sol",
+    "effort": "high",
+    "ctx": 828400,
+    "turns": 2
+  },
+  {
+    "records": [
+      {
+        "type": "turn_context",
+        "timestamp": "t1",
+        "payload": {
+          "turn_id": "1",
+          "model": "gpt-6-sol",
+          "collaboration_mode": {
+            "settings": {
+              "reasoning_effort": "high"
+            }
+          }
+        }
+      },
+      {
+        "type": "turn_context",
+        "timestamp": "t2",
+        "payload": {
+          "turn_id": "2",
+          "model": "gpt-reserve",
+          "collaboration_mode": {
+            "settings": {
+              "reasoning_effort": "medium"
+            }
+          }
+        }
+      }
+    ],
+    "evidence": [
+      {
+        "ts": "t2",
+        "kind": "silent_model_change",
+        "severity": "hard",
+        "detail": "model gpt-6-sol → gpt-reserve with no settings change (downgrade)",
+        "turn_id": "2",
+        "usage_percent": null,
+        "why": "smaller size tier"
+      },
+      {
+        "ts": "t2",
+        "kind": "silent_effort_change",
+        "severity": "hard",
+        "detail": "reasoning effort high → medium with no settings change",
+        "turn_id": "2",
+        "usage_percent": null
+      }
+    ],
+    "active": [
+      {
+        "ts": "t2",
+        "kind": "silent_model_change",
+        "severity": "hard",
+        "detail": "model gpt-6-sol → gpt-reserve with no settings change (downgrade)",
+        "turn_id": "2",
+        "usage_percent": null,
+        "why": "smaller size tier"
+      },
+      {
+        "ts": "t2",
+        "kind": "silent_effort_change",
+        "severity": "hard",
+        "detail": "reasoning effort high → medium with no settings change",
+        "turn_id": "2",
+        "usage_percent": null
+      }
+    ],
+    "model": "gpt-reserve",
+    "effort": "medium",
+    "ctx": null,
+    "turns": 2
+  }
+]

@@ -1,0 +1,31 @@
+[package]
+name = "is-gpt-nerfed"
+version = "0.6.0"
+edition = "2024"
+license = "MIT"
+default-run = "is-gpt-nerfed"
+
+[[bin]]
+name = "nerfed-test-server"
+path = "tests/support/fake_server.rs"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+eframe = { version = "0.36.2", default-features = false, features = ["glow", "default_fonts", "accesskit"] }
+rand = "0.9"
+regex = "1"
+rusqlite = { version = "0.38", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+toml = "0.9"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem"] }
+
+[profile.release]
+lto = "thin"
+strip = true
+codegen-units = 1
