@@ -298,26 +298,15 @@ pub fn open_folder(path: &Path) -> Result<()> {
 pub enum TrayEvent {
     Show,
     ToggleAutomatic,
+    ToggleCompanion,
     Quit,
 }
 pub fn icon_rgba() -> Vec<u8> {
-    let mut pixels = Vec::with_capacity(32 * 32 * 4);
-    for y in 0_i32..32 {
-        for x in 0_i32..32 {
-            let inside = (x - x.clamp(5, 26)).pow(2) + (y - y.clamp(5, 26)).pow(2) <= 25;
-            let bar = ((8..12).contains(&x) && (17..25).contains(&y))
-                || ((14..18).contains(&x) && (12..25).contains(&y))
-                || ((20..24).contains(&x) && (7..25).contains(&y));
-            pixels.extend(if !inside {
-                [0, 0, 0, 0]
-            } else if bar {
-                [255, 255, 255, 255]
-            } else {
-                [21, 134, 115, 255]
-            });
-        }
-    }
-    pixels
+    image::load_from_memory(include_bytes!("../macos/Resources/face-ok.png"))
+        .expect("bundled chip icon")
+        .resize_exact(32, 32, image::imageops::FilterType::Lanczos3)
+        .into_rgba8()
+        .into_raw()
 }
 #[cfg(windows)]
 mod tray {
@@ -365,8 +354,9 @@ mod tray {
                         }
                         if l as u32 == WM_RBUTTONUP {
                             let menu = CreatePopupMenu();
-                            AppendMenuW(menu, MF_STRING, 1, wide("打开窗口").as_ptr());
+                            AppendMenuW(menu, MF_STRING, 1, wide("打开主界面").as_ptr());
                             AppendMenuW(menu, MF_STRING, 2, wide("切换自动检测").as_ptr());
+                            AppendMenuW(menu, MF_STRING, 4, wide("显示 / 隐藏桌面芯片").as_ptr());
                             AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
                             AppendMenuW(menu, MF_STRING, 3, wide("退出程序").as_ptr());
                             let mut pos: POINT = std::mem::zeroed();
@@ -383,6 +373,7 @@ mod tray {
                             1 => Some(TrayEvent::Show),
                             2 => Some(TrayEvent::ToggleAutomatic),
                             3 => Some(TrayEvent::Quit),
+                            4 => Some(TrayEvent::ToggleCompanion),
                             _ => None,
                         };
                         if let Some(event) = event {

@@ -1,501 +1,575 @@
 use anyhow::{Context, Result};
-use eframe::egui;
-mod ui;
 use is_gpt_nerfed::{
-    appserver::{self, Target},
-    platform::{self, Binary, Tray, TrayEvent},
-    scanner::Scan,
-    storage::{self, Account, Probe, Settings, Store, Thread},
+    platform::{self, Tray, TrayEvent},
+    runtime::{self, Action, Effect, Handle, ProbeTarget, Snapshot},
+    storage::{Settings, Store},
 };
+use serde::Serialize;
 use std::{
-    collections::BTreeMap,
-    fs::File,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
-        mpsc,
     },
     thread::JoinHandle,
-    time::{Duration, Instant},
+    time::Duration,
 };
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
-struct Snapshot {
-    threads: Vec<Thread>,
-    history: Vec<Probe>,
-    scans: BTreeMap<String, Scan>,
-    scan_errors: BTreeMap<String, String>,
-    hooks: Option<appserver::HookStatus>,
-    hook_error: Option<String>,
-    binary: Option<Binary>,
-    account: Account,
-    defaults: (String, String),
-}
-enum Event {
-    Progress(String),
-    Snapshot(Result<Snapshot>),
-    Scan(Result<(String, Scan)>),
-    Probe(Result<Box<Probe>>),
-}
-struct Task {
-    cancel: Arc<AtomicBool>,
-    thread: Option<JoinHandle<()>>,
-    started: Instant,
-    kind: &'static str,
-}
-impl Drop for Task {
-    fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
-}
 struct Desktop {
     store: Store,
-    _lock: File,
-    tray: Tray,
-    cfg: Settings,
-    draft: Settings,
-    rx: mpsc::Receiver<Event>,
-    tx: mpsc::Sender<Event>,
-    task: Option<Task>,
-    threads: Vec<Thread>,
-    history: Vec<Probe>,
-    scans: BTreeMap<String, Scan>,
-    scan_errors: BTreeMap<String, String>,
-    hooks: Option<appserver::HookStatus>,
-    hook_error: Option<String>,
-    binary: Option<Binary>,
-    account: Account,
-    selected: Option<String>,
-    tab: u8,
-    filter: String,
-    status: String,
-    error: Option<String>,
-    last_refresh: Instant,
-    seen: BTreeMap<String, f64>,
-    attempts: BTreeMap<String, f64>,
-    fresh_model: String,
-    fresh_effort: String,
-    fresh_originator: String,
-    hidden: bool,
-    quitting: bool,
-    confirm_auto: bool,
+    tray: Mutex<Option<Tray>>,
+    tray_worker: Mutex<Option<JoinHandle<()>>>,
+    exiting: Arc<AtomicBool>,
+    pet: Mutex<PetLayout>,
 }
-impl Desktop {
-    fn new(store: Store, lock: File, cfg: Settings, tray: Tray, ctx: &egui::Context) -> Self {
-        let (tx, rx) = mpsc::channel();
-        let mut app = Self {
-            store,
-            _lock: lock,
-            tray,
-            draft: cfg.clone(),
-            cfg,
-            rx,
-            tx,
-            task: None,
-            threads: vec![],
-            history: vec![],
-            scans: BTreeMap::new(),
-            scan_errors: BTreeMap::new(),
-            hooks: None,
-            hook_error: None,
-            binary: None,
-            account: Account {
-                id: "local".into(),
-                label: "正在检查本地环境".into(),
-            },
-            selected: None,
-            tab: 0,
-            filter: String::new(),
-            status: "正在读取本地会话".into(),
-            error: None,
-            last_refresh: Instant::now(),
-            seen: BTreeMap::new(),
-            attempts: BTreeMap::new(),
-            fresh_model: String::new(),
-            fresh_effort: String::new(),
-            fresh_originator: "Codex Desktop".into(),
-            hidden: false,
-            quitting: false,
-            confirm_auto: false,
+
+fn memory_usage(window: &WebviewWindow, low: bool) {
+    #[cfg(windows)]
+    let _ = window.with_webview(move |webview| {
+        use webview2_com::Microsoft::Web::WebView2::Win32::{
+            COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL, ICoreWebView2_19,
         };
-        app.refresh(ctx, true);
-        app
-    }
-    fn refresh(&mut self, ctx: &egui::Context, discover: bool) {
-        if self.task.is_some() {
-            return;
-        }
-        let store = self.store.clone();
-        let cfg = self.cfg.clone();
-        let binary = self.binary.clone();
-        let hooks = self.hooks.clone();
-        let hook_error = self.hook_error.clone();
-        let tx = self.tx.clone();
-        let ctx = ctx.clone();
-        let cancel = Arc::new(AtomicBool::new(false));
-        let cancel_worker = cancel.clone();
-        let thread = std::thread::spawn(move || {
-            let result = (|| {
-                let threads = store.threads()?;
-                let history = store.history()?;
-                let account = store.account();
-                let defaults = store.defaults(&threads);
-                let batch = store.scan_recent(&threads, &cancel_worker);
-                let binary = if discover {
-                    platform::discover(&cfg.codex_bin)?
-                } else {
-                    binary
-                };
-                let (hooks, hook_error) = if discover && let Some(binary) = &binary {
-                    match appserver::inspect_hooks(binary, cancel_worker) {
-                        Ok(status) => (Some(status), None),
-                        Err(error) => (None, Some(error.to_string())),
-                    }
-                } else {
-                    (hooks, hook_error)
-                };
-                Ok(Snapshot {
-                    threads,
-                    history,
-                    scans: batch.scans,
-                    scan_errors: batch.errors,
-                    hooks,
-                    hook_error,
-                    binary,
-                    account,
-                    defaults,
-                })
-            })();
-            let _ = tx.send(Event::Snapshot(result));
-            ctx.request_repaint();
-        });
-        self.last_refresh = Instant::now();
-        self.task = Some(Task {
-            cancel,
-            thread: Some(thread),
-            started: Instant::now(),
-            kind: "refresh",
-        });
-    }
-    fn scan(&mut self, ctx: &egui::Context) {
-        if self.task.is_some() {
-            return;
-        }
-        let Some(t) = self
-            .threads
-            .iter()
-            .find(|t| Some(&t.id) == self.selected.as_ref())
-            .cloned()
-        else {
-            return;
-        };
-        let store = self.store.clone();
-        let tx = self.tx.clone();
-        let ctx = ctx.clone();
-        let cancel = Arc::new(AtomicBool::new(false));
-        let thread = std::thread::spawn(move || {
-            let result = store.scan(&t).map(|s| (t.id, s));
-            let _ = tx.send(Event::Scan(result));
-            ctx.request_repaint();
-        });
-        self.status = "正在扫描本地日志，不消耗推理额度".into();
-        self.error = None;
-        self.task = Some(Task {
-            cancel,
-            thread: Some(thread),
-            started: Instant::now(),
-            kind: "scan",
-        });
-    }
-    fn start_probe(&mut self, ctx: &egui::Context, target: Target) {
-        if self.task.is_some() {
-            return;
-        }
-        let Some(binary) = self.binary.clone() else {
-            self.error = Some("未找到 Codex，请先安装并登录 Codex，或在设置中选择其路径".into());
-            return;
-        };
-        self.attempts
-            .insert(target.id().unwrap_or("fresh").into(), storage::now());
-        let store = self.store.clone();
-        let cfg = self.cfg.clone();
-        let tx = self.tx.clone();
-        let ctx = ctx.clone();
-        let cancel = Arc::new(AtomicBool::new(false));
-        let worker_cancel = cancel.clone();
-        let thread = std::thread::spawn(move || {
-            let progress = |text| {
-                let _ = tx.send(Event::Progress(text));
-                ctx.request_repaint();
-            };
-            let result = appserver::probe(&store, &binary, target, &cfg, worker_cancel, &progress);
-            let _ = tx.send(Event::Probe(result.map(Box::new)));
-            ctx.request_repaint();
-        });
-        self.status = "正在启动检测".into();
-        self.error = None;
-        self.task = Some(Task {
-            cancel,
-            thread: Some(thread),
-            started: Instant::now(),
-            kind: "probe",
-        });
-    }
-    fn save(&mut self, ctx: &egui::Context) {
-        match self.store.save_settings(&self.draft) {
-            Ok(()) => {
-                let rediscover = self.draft.codex_bin != self.cfg.codex_bin;
-                self.cfg = self.draft.clone();
-                self.seen.clear();
-                self.status = "设置已保存".into();
-                self.error = None;
-                if rediscover {
-                    self.refresh(ctx, true);
-                }
-            }
-            Err(e) => self.error = Some(e.to_string()),
-        }
-    }
-    fn toggle_auto(&mut self, ctx: &egui::Context) {
-        // Tray actions change the saved schedule, not an unfinished settings form.
-        self.draft = self.cfg.clone();
-        if self.cfg.automatic {
-            self.draft.automatic = false;
-            self.save(ctx);
-        } else {
-            self.confirm_auto = true;
-        }
-    }
-    fn request_quit(&mut self, ctx: &egui::Context) {
-        self.quitting = true;
-        if let Some(task) = &self.task {
-            task.cancel.store(true, Ordering::Relaxed);
-            self.status = "正在停止检测并回收私有进程…".into();
-        } else {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
-    }
-    fn tick(&mut self, ctx: &egui::Context) {
-        while let Ok(event) = self.tray.events.try_recv() {
-            match event {
-                TrayEvent::Show => {
-                    self.hidden = false;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                }
-                TrayEvent::ToggleAutomatic => {
-                    self.hidden = false;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                    self.toggle_auto(ctx);
-                }
-                TrayEvent::Quit => self.request_quit(ctx),
+        use windows_core::Interface;
+        // Keep the document and unsaved input intact; only ask the runtime to reclaim caches.
+        // Older WebView2 runtimes may not expose this optional interface.
+        unsafe {
+            if let Ok(core) = webview
+                .controller()
+                .CoreWebView2()
+                .and_then(|v| v.cast::<ICoreWebView2_19>())
+            {
+                let _ = core.SetMemoryUsageTargetLevel(COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL(
+                    i32::from(low),
+                ));
             }
         }
-        while let Ok(event) = self.rx.try_recv() {
-            if let Event::Progress(text) = event {
-                self.status = text;
-                continue;
-            }
-            self.task.take();
-            match event {
-                Event::Snapshot(Ok(s)) => {
-                    self.threads = s.threads;
-                    self.history = s.history;
-                    self.scans = s.scans;
-                    self.scan_errors = s.scan_errors;
-                    self.hooks = s.hooks;
-                    self.hook_error = s.hook_error;
-                    self.binary = s.binary;
-                    self.account = s.account;
-                    if self.fresh_model.is_empty() {
-                        self.fresh_model = s.defaults.0;
-                        self.fresh_effort = s.defaults.1;
-                        if let Some(thread) =
-                            self.threads.first().filter(|t| !t.originator.is_empty())
-                        {
-                            self.fresh_originator = thread.originator.clone();
-                        }
-                    }
-                    if self
-                        .selected
-                        .as_ref()
-                        .is_none_or(|id| !self.threads.iter().any(|t| t.id == *id))
-                    {
-                        self.selected = self.threads.first().map(|t| t.id.clone());
-                    }
-                    self.status = format!(
-                        "已读取 {} 个用户会话 · 后台自动检测{}",
-                        self.threads.len(),
-                        if self.cfg.automatic {
-                            "已开启"
-                        } else {
-                            "已关闭"
-                        }
-                    );
-                    self.error = None;
-                }
-                Event::Snapshot(Err(e)) | Event::Scan(Err(e)) | Event::Probe(Err(e)) => {
-                    self.error = Some(format!("{e:#}"));
-                    self.status = "操作失败，可以重试".into();
-                }
-                Event::Scan(Ok((id, scan))) => {
-                    self.scan_errors.remove(&id);
-                    self.scans.insert(id, scan);
-                    self.status = "本地日志扫描已完成".into();
-                }
-                Event::Probe(Ok(probe)) => {
-                    self.status = if probe.status == "cancelled" {
-                        "检测已取消".into()
-                    } else {
-                        format!("检测完成：{} · {:.0} 秒", probe.label(), probe.elapsed_s)
-                    };
-                    if self.cfg.notifications
-                        && probe.status != "cancelled"
-                        && matches!(
-                            probe.assessment.verdict.as_str(),
-                            "MISMATCH" | "DOWNGRADED!" | "SUSPICIOUS" | "UNLISTED"
-                        )
-                    {
-                        self.tray.notify(format!(
-                            "{} · 所选模型 {}{}",
-                            probe.label(),
-                            probe.expected,
-                            if probe.assessment.verdict == "UNLISTED" {
-                                "，无法判断是否降级"
-                            } else {
-                                ""
-                            }
-                        ));
-                    }
-                    self.history.insert(0, *probe);
-                    self.last_refresh = Instant::now() - Duration::from_secs(30);
-                }
-                Event::Progress(_) => {}
-            }
-        }
-        if self.quitting {
-            if self.task.is_none() {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-        } else if self.task.is_none() {
-            if self.last_refresh.elapsed() >= Duration::from_secs(30) {
-                self.refresh(ctx, false);
-            } else if self.binary.is_some() && self.account.id != "local" {
-                let candidates = self
-                    .threads
-                    .iter()
-                    .filter(|t| !self.scan_errors.contains_key(&t.id))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                if let Some(t) = storage::due_thread(
-                    &candidates,
-                    &self.history,
-                    &mut self.seen,
-                    &self.attempts,
-                    &self.cfg,
-                    &self.account.id,
-                    storage::now(),
-                )
-                .cloned()
-                {
-                    self.start_probe(ctx, Target::Thread(t));
-                }
-            }
-        }
-        // eframe's logic runs even when hidden; no continuous drawing in the tray.
-        ctx.request_repaint_after(Duration::from_millis(if self.task.is_some() {
-            250
-        } else {
-            1000
-        }));
-    }
+    });
+    #[cfg(not(windows))]
+    let _ = (window, low);
 }
-impl eframe::App for Desktop {
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if ctx.input(|i| i.viewport().close_requested()) && !self.quitting {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-            self.hidden = true;
+
+#[derive(Clone, Copy, Default, Serialize)]
+struct PetLayout {
+    expanded: bool,
+    chip_x: f64,
+    chip_y: f64,
+}
+
+async fn execute(handle: &Handle, action: Action) -> std::result::Result<(), String> {
+    let handle = handle.clone();
+    tauri::async_runtime::spawn_blocking(move || handle.execute(action))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+fn get_snapshot(handle: tauri::State<'_, Handle>) -> Snapshot {
+    handle.snapshot()
+}
+#[tauri::command]
+async fn refresh(handle: tauri::State<'_, Handle>) -> std::result::Result<(), String> {
+    execute(&handle, Action::Refresh).await
+}
+#[tauri::command]
+async fn scan_thread(
+    handle: tauri::State<'_, Handle>,
+    thread_id: String,
+) -> std::result::Result<(), String> {
+    execute(&handle, Action::Scan(thread_id)).await
+}
+#[tauri::command]
+async fn start_probe(
+    handle: tauri::State<'_, Handle>,
+    target: ProbeTarget,
+) -> std::result::Result<(), String> {
+    execute(&handle, Action::Probe(target)).await
+}
+#[tauri::command]
+async fn cancel_probe(handle: tauri::State<'_, Handle>) -> std::result::Result<(), String> {
+    execute(&handle, Action::Cancel).await
+}
+#[tauri::command]
+async fn save_settings(
+    handle: tauri::State<'_, Handle>,
+    settings: Settings,
+    confirm_automatic: bool,
+) -> std::result::Result<(), String> {
+    execute(
+        &handle,
+        Action::Save {
+            settings,
+            confirm_automatic,
+        },
+    )
+    .await
+}
+#[tauri::command]
+async fn confirm_automatic(
+    handle: tauri::State<'_, Handle>,
+    confirmed: bool,
+) -> std::result::Result<(), String> {
+    execute(&handle, Action::ConfirmAutomatic(confirmed)).await
+}
+#[tauri::command]
+async fn set_companion(
+    handle: tauri::State<'_, Handle>,
+    visible: bool,
+) -> std::result::Result<(), String> {
+    execute(&handle, Action::Companion(visible)).await
+}
+#[tauri::command]
+async fn show_main(
+    handle: tauri::State<'_, Handle>,
+    follow_status: bool,
+) -> std::result::Result<(), String> {
+    execute(&handle, Action::ShowMain { follow_status }).await
+}
+#[tauri::command]
+fn open_data_dir(desktop: tauri::State<'_, Desktop>) -> std::result::Result<(), String> {
+    platform::open_folder(&desktop.store.home).map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn quit(handle: tauri::State<'_, Handle>) -> std::result::Result<(), String> {
+    execute(&handle, Action::Quit).await
+}
+
+#[tauri::command]
+fn window_ready(
+    window: WebviewWindow,
+    handle: tauri::State<'_, Handle>,
+    desktop: tauri::State<'_, Desktop>,
+) -> std::result::Result<(), String> {
+    if !handle.snapshot().quitting
+        && (window.label() == "main" || handle.snapshot().settings.companion)
+    {
+        if window.label() == "companion" {
+            show_pet_window(&window, &desktop).map_err(|e| e.to_string())?;
+        } else {
+            memory_usage(&window, false);
+            window.show().map_err(|e| e.to_string())?;
+            let _ = window.set_focus();
         }
-        self.tick(ctx);
     }
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        ui::render(self, ui);
+    Ok(())
+}
+
+// Both sizes and offsets are logical; placement is computed in physical monitor coordinates.
+fn placement(
+    anchor: [f64; 2],
+    bounds: [f64; 4],
+    scale: f64,
+    expanded: bool,
+) -> ([f64; 2], PetLayout) {
+    let chip = 96.0 * scale;
+    let size = if expanded {
+        [344.0 * scale, 184.0 * scale]
+    } else {
+        [chip, chip]
+    };
+    let ax = anchor[0].clamp(bounds[0], (bounds[2] - chip).max(bounds[0]));
+    let ay = anchor[1].clamp(bounds[1], (bounds[3] - chip).max(bounds[1]));
+    let x = if ax + size[0] > bounds[2] {
+        ax + chip - size[0]
+    } else {
+        ax
+    };
+    let y = if ay + size[1] > bounds[3] {
+        ay + chip - size[1]
+    } else {
+        ay
+    };
+    let x = x.clamp(bounds[0], (bounds[2] - size[0]).max(bounds[0]));
+    let y = y.clamp(bounds[1], (bounds[3] - size[1]).max(bounds[1]));
+    (
+        [x, y],
+        PetLayout {
+            expanded,
+            chip_x: (ax - x) / scale,
+            chip_y: (ay - y) / scale,
+        },
+    )
+}
+fn layout_pet(window: &WebviewWindow, desktop: &Desktop, expanded: bool) -> Result<PetLayout> {
+    let mut current = desktop.pet.lock().unwrap_or_else(|e| e.into_inner());
+    let scale = window.scale_factor()?;
+    let pos = window.outer_position()?;
+    let anchor = [
+        pos.x as f64 + current.chip_x * scale,
+        pos.y as f64 + current.chip_y * scale,
+    ];
+    let monitor = window
+        .available_monitors()?
+        .into_iter()
+        .find(|m| {
+            let p = m.position();
+            let s = m.size();
+            anchor[0] >= p.x as f64
+                && anchor[0] < p.x as f64 + s.width as f64
+                && anchor[1] >= p.y as f64
+                && anchor[1] < p.y as f64 + s.height as f64
+        })
+        .or(window.current_monitor()?)
+        .or(window.primary_monitor()?)
+        .context("无法读取显示器信息")?;
+    let area = monitor.work_area();
+    let (pos, layout) = placement(
+        anchor,
+        [
+            area.position.x as f64,
+            area.position.y as f64,
+            (area.position.x + area.size.width as i32) as f64,
+            (area.position.y + area.size.height as i32) as f64,
+        ],
+        scale,
+        expanded,
+    );
+    let size = if expanded {
+        [344.0, 184.0]
+    } else {
+        [96.0, 96.0]
+    };
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos,
+        };
+        // A single native operation preserves the chip anchor without an intermediate off-screen frame.
+        if SetWindowPos(
+            window.hwnd()?.0 as _,
+            std::ptr::null_mut(),
+            pos[0].round() as i32,
+            pos[1].round() as i32,
+            (size[0] * scale).round() as i32,
+            (size[1] * scale).round() as i32,
+            SWP_NOACTIVATE | SWP_NOZORDER,
+        ) == 0
+        {
+            return Err(std::io::Error::last_os_error().into());
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        window.set_position(tauri::PhysicalPosition::new(pos[0] as i32, pos[1] as i32))?;
+        window.set_size(tauri::LogicalSize::new(size[0], size[1]))?;
+    }
+    *current = layout;
+    Ok(layout)
+}
+#[tauri::command]
+fn companion_layout(
+    window: WebviewWindow,
+    desktop: tauri::State<'_, Desktop>,
+    expanded: bool,
+) -> std::result::Result<PetLayout, String> {
+    if window.label() != "companion" {
+        return Err("此操作仅适用于桌宠窗口".into());
+    }
+    layout_pet(&window, &desktop, expanded).map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn companion_menu(window: WebviewWindow, app: tauri::AppHandle) -> std::result::Result<(), String> {
+    use tauri::menu::{Menu, MenuItem};
+    let build = || -> tauri::Result<()> {
+        let show = MenuItem::with_id(&app, "pet-show", "打开主界面", true, None::<&str>)?;
+        let hide = MenuItem::with_id(&app, "pet-hide", "收起桌宠", true, None::<&str>)?;
+        let quit = MenuItem::with_id(&app, "pet-quit", "退出程序", true, None::<&str>)?;
+        window.popup_menu(&Menu::with_items(&app, &[&show, &hide, &quit])?)
+    };
+    build().map_err(|e| e.to_string())
+}
+fn navigation_allowed(url: &tauri::Url) -> bool {
+    matches!(url.scheme(), "tauri" | "about")
+        || url.host_str() == Some("tauri.localhost")
+        || (cfg!(debug_assertions)
+            && url.host_str() == Some("127.0.0.1")
+            && url.port() == Some(5173))
+}
+fn build_main(app: &tauri::AppHandle, store: &Store) -> Result<WebviewWindow> {
+    let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("is-gpt-nerfed — Windows")
+        .inner_size(1000.0, 680.0)
+        .min_inner_size(800.0, 520.0)
+        .center()
+        .prevent_overflow()
+        .decorations(false)
+        .shadow(true)
+        .transparent(true)
+        .visible(false)
+        .background_color(tauri::webview::Color(246, 248, 253, 0))
+        .data_directory(store.home.join("webview"))
+        .on_navigation(navigation_allowed)
+        .build()?;
+    let _ = window.set_effects(tauri::utils::config::WindowEffectsConfig {
+        effects: vec![tauri::utils::WindowEffect::MicaLight],
+        ..Default::default()
+    });
+    Ok(window)
+}
+fn show_main_window(app: &tauri::AppHandle) -> Result<()> {
+    let window = if let Some(w) = app.get_webview_window("main") {
+        w
+    } else {
+        build_main(app, &app.state::<Desktop>().store)?
+    };
+    memory_usage(&window, false);
+    window.unminimize()?;
+    window.show()?;
+    window.set_focus()?;
+    Ok(())
+}
+fn set_pet_window(app: &tauri::AppHandle, visible: bool) -> Result<()> {
+    let desktop = app.state::<Desktop>();
+    if let Some(window) = app.get_webview_window("companion") {
+        if visible {
+            show_pet_window(&window, &desktop)?;
+        } else {
+            window.hide()?;
+            memory_usage(&window, true);
+            let layout = layout_pet(&window, &desktop, false)?;
+            window.emit("companion-layout", layout)?;
+        }
+        return Ok(());
+    }
+    if !visible {
+        return Ok(());
+    }
+    *desktop.pet.lock().unwrap_or_else(|e| e.into_inner()) = PetLayout::default();
+    let window = WebviewWindowBuilder::new(
+        app,
+        "companion",
+        WebviewUrl::App("index.html?window=companion".into()),
+    )
+    .title("Nerfed · 桌面浮窗")
+    .inner_size(96.0, 96.0)
+    .min_inner_size(96.0, 96.0)
+    .decorations(false)
+    .shadow(false)
+    .transparent(true)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .focused(false)
+    .visible(false)
+    .background_color(tauri::webview::Color(0, 0, 0, 0))
+    .data_directory(desktop.store.home.join("webview"))
+    .on_navigation(navigation_allowed)
+    .build()?;
+    if let Some(monitor) = window.primary_monitor()? {
+        let area = monitor.work_area();
+        let scale = monitor.scale_factor();
+        window.set_position(tauri::PhysicalPosition::new(
+            area.position.x + area.size.width as i32 - (120.0 * scale) as i32,
+            area.position.y + area.size.height as i32 - (120.0 * scale) as i32,
+        ))?;
+    }
+    Ok(())
+}
+fn show_pet_window(window: &WebviewWindow, desktop: &Desktop) -> Result<()> {
+    memory_usage(window, false);
+    window.show()?;
+    // Showing a captionless Win32 window can restore the system's wider default frame.
+    let expanded = desktop
+        .pet
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .expanded;
+    let layout = layout_pet(window, desktop, expanded)?;
+    window.emit("companion-layout", layout)?;
+    Ok(())
+}
+fn missing_webview() {
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            IDYES, MB_ICONINFORMATION, MB_YESNO, MessageBoxW,
+        };
+        let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+        if MessageBoxW(std::ptr::null_mut(), wide("Nerfed 需要 Microsoft Edge WebView2 Runtime。\n\n请安装后重新打开本程序。是否打开微软官方安装页面？\n\nhttps://developer.microsoft.com/microsoft-edge/webview2/").as_ptr(), wide("需要 WebView2 运行时").as_ptr(), MB_YESNO | MB_ICONINFORMATION) == IDYES {
+            let _ = platform::command(std::path::Path::new("explorer.exe"), &["https://developer.microsoft.com/microsoft-edge/webview2/".into()]).and_then(|mut c| c.spawn().map_err(Into::into));
+        }
     }
 }
 pub fn run() -> Result<()> {
+    if tauri::webview_version().is_err() {
+        missing_webview();
+        return Ok(());
+    }
     let store = Store::local()?;
     let cfg = store.settings()?;
-    let lock = store.lock("rust-desktop.lock")?;
-    let tray = Tray::new()?;
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("is-gpt-nerfed — Windows")
-            .with_icon(egui::IconData {
-                rgba: platform::icon_rgba(),
-                width: 32,
-                height: 32,
-            })
-            .with_inner_size([1040.0, 660.0])
-            .with_min_inner_size([800.0, 480.0])
-            .with_clamp_size_to_monitor_size(true),
-        ..Default::default()
-    };
-    eframe::run_native(
-        "is-gpt-nerfed",
-        options,
-        Box::new(move |cc| {
-            ui::setup(&cc.egui_ctx);
-            Ok(Box::new(Desktop::new(store, lock, cfg, tray, &cc.egui_ctx)))
-        }),
-    )
-    .map_err(|e| anyhow::anyhow!(e.to_string()))
-    .context("无法打开 Windows 图形界面")
+    let app = tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            get_snapshot,
+            refresh,
+            scan_thread,
+            start_probe,
+            cancel_probe,
+            save_settings,
+            confirm_automatic,
+            set_companion,
+            show_main,
+            open_data_dir,
+            quit,
+            window_ready,
+            companion_layout,
+            companion_menu
+        ])
+        .setup(move |app| {
+            let app_handle = app.handle().clone();
+            let tray = Tray::new()?;
+            let exiting = Arc::new(AtomicBool::new(false));
+            let callback_app = app_handle.clone();
+            let handle = runtime::launch(store.clone(), cfg.clone(), move |effect| {
+                let app = &callback_app;
+                let result = match effect {
+                    Effect::State(state) => {
+                        app.emit("app-state", &state).map_err(anyhow::Error::from)
+                    }
+                    Effect::Notify(message) => {
+                        if let Some(state) = app.try_state::<Desktop>()
+                            && let Some(tray) = state
+                                .tray
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .as_ref()
+                        {
+                            tray.notify(message);
+                        }
+                        Ok(())
+                    }
+                    Effect::ShowMain => show_main_window(app),
+                    Effect::Companion(visible) => set_pet_window(app, visible),
+                    Effect::Exit => {
+                        let state = app.state::<Desktop>();
+                        state.exiting.store(true, Ordering::Relaxed);
+                        if let Some(worker) = state
+                            .tray_worker
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .take()
+                        {
+                            let _ = worker.join();
+                        }
+                        state.tray.lock().unwrap_or_else(|e| e.into_inner()).take();
+                        app.exit(0);
+                        Ok(())
+                    }
+                };
+                if let Err(error) = result {
+                    let _ = app.emit("desktop-error", format!("{error:#}"));
+                }
+            })?;
+            app.manage(handle.clone());
+            app.manage(Desktop {
+                store: store.clone(),
+                tray: Mutex::new(Some(tray)),
+                tray_worker: Mutex::new(None),
+                exiting: exiting.clone(),
+                pet: Mutex::new(PetLayout::default()),
+            });
+            let worker_app = app_handle.clone();
+            let worker = std::thread::spawn(move || {
+                while !exiting.load(Ordering::Relaxed) {
+                    let events = {
+                        let state = worker_app.state::<Desktop>();
+                        let tray = state.tray.lock().unwrap_or_else(|e| e.into_inner());
+                        tray.as_ref()
+                            .map(|t| t.events.try_iter().collect::<Vec<_>>())
+                            .unwrap_or_default()
+                    };
+                    for event in events {
+                        handle.post(match event {
+                            TrayEvent::Show => Action::ShowMain {
+                                follow_status: false,
+                            },
+                            TrayEvent::ToggleAutomatic => Action::ToggleAutomatic,
+                            TrayEvent::ToggleCompanion => {
+                                Action::Companion(!handle.snapshot().settings.companion)
+                            }
+                            TrayEvent::Quit => Action::Quit,
+                        });
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            });
+            *app.state::<Desktop>()
+                .tray_worker
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(worker);
+            build_main(&app_handle, &store)?;
+            if cfg.companion {
+                set_pet_window(&app_handle, true)?;
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                if window.label() == "main" {
+                    let _ = window.hide();
+                    if let Some(webview) = window.get_webview_window("main") {
+                        memory_usage(&webview, true);
+                    }
+                } else {
+                    window.state::<Handle>().post(Action::Companion(false));
+                }
+            }
+            if let tauri::WindowEvent::Focused(focused) = event
+                && let Some(webview) = window.get_webview_window(window.label())
+            {
+                if *focused {
+                    memory_usage(&webview, false);
+                } else if window.is_minimized().unwrap_or(false) {
+                    memory_usage(&webview, true);
+                }
+            }
+        })
+        .on_menu_event(|app, event| {
+            let action = match event.id().as_ref() {
+                "pet-show" => Some(Action::ShowMain {
+                    follow_status: true,
+                }),
+                "pet-hide" => Some(Action::Companion(false)),
+                "pet-quit" => Some(Action::Quit),
+                _ => None,
+            };
+            if let Some(action) = action {
+                app.state::<Handle>().post(action);
+            }
+        })
+        .build(tauri::generate_context!())
+        .context("无法启动 Windows 界面")?;
+    app.run(|app, event| {
+        if let tauri::RunEvent::ExitRequested { api, .. } = event
+            && !app.state::<Desktop>().exiting.load(Ordering::Relaxed)
+        {
+            api.prevent_exit();
+            app.state::<Handle>().post(Action::Quit);
+        }
+    });
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn tray_toggle_does_not_save_an_unfinished_settings_form() {
-        let root =
-            std::env::temp_dir().join(format!("nerfed-tray-settings-{}", rand::random::<u64>()));
-        std::fs::create_dir_all(&root).unwrap();
-        let binary = root.join("offline-placeholder.exe");
-        std::fs::write(&binary, b"not an executable").unwrap();
-        let store = Store {
-            codex: root.join("codex"),
-            home: root.clone(),
-        };
-        let cfg = Settings {
-            automatic: true,
-            queries: 3,
-            codex_bin: binary.to_string_lossy().into_owned(),
-            ..Default::default()
-        };
-        store.save_settings(&cfg).unwrap();
-        let ctx = egui::Context::default();
-        let mut app = Desktop::new(
-            store.clone(),
-            store.lock("desktop-test.lock").unwrap(),
-            cfg.clone(),
-            Tray::new().unwrap(),
-            &ctx,
-        );
-        app.draft.queries = 1;
-        app.draft.interval_minutes = 99;
-        app.draft.codex_bin = root.join("unsaved.exe").to_string_lossy().into_owned();
-        app.toggle_auto(&ctx);
-        let saved = store.settings().unwrap();
-        assert!(!saved.automatic);
-        assert_eq!(saved.queries, cfg.queries);
-        assert_eq!(saved.interval_minutes, cfg.interval_minutes);
-        assert_eq!(saved.codex_bin, cfg.codex_bin);
-        drop(app);
-        std::fs::remove_dir_all(root).unwrap();
+    fn companion_expansion_keeps_anchor_inside_scaled_work_areas() {
+        for scale in [1.0, 1.5, 2.0] {
+            for bounds in [[0.0, 0.0, 1920.0, 1040.0], [-1920.0, -200.0, 0.0, 840.0]] {
+                for anchor in [
+                    [bounds[0] + 8.0, bounds[1] + 8.0],
+                    [bounds[2] - 110.0 * scale, bounds[3] - 110.0 * scale],
+                ] {
+                    let (pos, layout) = placement(anchor, bounds, scale, true);
+                    assert!((pos[0] + layout.chip_x * scale - anchor[0]).abs() < 0.001);
+                    assert!((pos[1] + layout.chip_y * scale - anchor[1]).abs() < 0.001);
+                    assert!(pos[0] >= bounds[0] && pos[0] + 344.0 * scale <= bounds[2]);
+                    assert!(pos[1] >= bounds[1] && pos[1] + 184.0 * scale <= bounds[3]);
+                    let (collapsed, _) = placement(anchor, bounds, scale, false);
+                    assert_eq!(collapsed, anchor);
+                }
+            }
+        }
     }
 }

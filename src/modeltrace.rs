@@ -6,6 +6,14 @@ use std::{collections::BTreeMap, sync::LazyLock};
 const DIM: usize = 355;
 static NUMBERS: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\p{Nd}+").unwrap());
 
+/// Shared reference requested for 6.1 Sol; do not duplicate a candidate and split its probability.
+pub fn reference_model(model: &str) -> &str {
+    match model {
+        "gpt-6.1-sol" => "gpt-6-astra",
+        other => other,
+    }
+}
+
 #[derive(Deserialize)]
 pub struct Bank {
     models: Vec<Model>,

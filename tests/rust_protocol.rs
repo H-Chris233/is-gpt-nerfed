@@ -48,8 +48,10 @@ impl Fixture {
             rollout_path: rollout,
             source: "cli".into(),
             cwd: root.display().to_string(),
-            model: if scenario == "unlisted" {
+            model: if scenario == "shared" {
                 "gpt-6.1-sol"
+            } else if scenario == "unlisted" {
+                "gpt-future-unlisted"
             } else {
                 "gpt-6-astra"
             }
@@ -153,8 +155,8 @@ fn live_hook_inspection() {
     }
 }
 #[test]
-fn unlisted_hinted_and_busy_fallback_are_handled() {
-    for scenario in ["unlisted", "hinted", "fallback"] {
+fn shared_unlisted_hinted_and_busy_fallback_are_handled() {
+    for scenario in ["shared", "unlisted", "hinted", "fallback"] {
         let f = Fixture::new(scenario);
         let p = f.run();
         assert_eq!(
@@ -166,6 +168,16 @@ fn unlisted_hinted_and_busy_fallback_are_handled() {
             },
             "{scenario}"
         );
+        if scenario == "shared" {
+            assert_eq!(p.expected, "gpt-6.1-sol");
+            assert_eq!(p.assessment.reference_model.as_deref(), Some("gpt-6-astra"));
+            assert_eq!(p.analysis.as_ref().unwrap().prediction, "gpt-6-astra");
+            let restored = f.store.history().unwrap();
+            assert_eq!(
+                restored[0].assessment.reference_model.as_deref(),
+                Some("gpt-6-astra")
+            );
+        }
     }
 }
 #[test]

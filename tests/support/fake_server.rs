@@ -60,7 +60,7 @@ fn main() {
             "initialize" => send(json!({"id":id,"result":{"userAgent":"fake-rust"}})),
             "initialized" => {}
             "thread/read" => {
-                let mut t = json!({"id":p["threadId"],"path":"C:/Test 中文 Space/rollout.jsonl","model":if scenario=="unlisted"{"gpt-6.1-sol"}else{"gpt-6-astra"},"modelProvider":"openai","reasoningEffort":"high","cwd":"C:/Test 中文 Space","ephemeral":false});
+                let mut t = json!({"id":p["threadId"],"path":"C:/Test 中文 Space/rollout.jsonl","model":if scenario=="shared"{"gpt-6.1-sol"}else if scenario=="unlisted"{"gpt-future-unlisted"}else{"gpt-6-astra"},"modelProvider":"openai","reasoningEffort":"high","cwd":"C:/Test 中文 Space","ephemeral":false});
                 if scenario == "hinted" {
                     t.as_object_mut().unwrap().remove("model");
                     t.as_object_mut().unwrap().remove("modelProvider");

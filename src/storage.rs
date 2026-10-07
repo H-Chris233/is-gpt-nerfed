@@ -390,6 +390,7 @@ impl Thread {
 #[serde(default)]
 pub struct Settings {
     pub automatic: bool,
+    pub companion: bool,
     pub interval_minutes: u32,
     pub queries: usize,
     pub timeout_seconds: u64,
@@ -400,6 +401,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             automatic: false,
+            companion: false,
             interval_minutes: 30,
             queries: 3,
             timeout_seconds: 300,
@@ -495,6 +497,10 @@ impl Probe {
                 confidence: v["confidence"].as_str().map(str::to_owned),
                 p_expected: v["p_expected"].as_f64(),
                 margin: v["margin"].as_f64(),
+                reference_model: v["reference_model"]
+                    .as_str()
+                    .or_else(|| full["reference_model"].as_str())
+                    .map(str::to_owned),
             },
             analysis,
             errors: full["errors"]
@@ -512,6 +518,14 @@ impl Probe {
         }
     }
     pub fn label(&self) -> &str {
+        if self.assessment.reference_model.is_some() {
+            match self.assessment.verdict.as_str() {
+                "MATCH" => return "参考指纹匹配",
+                "MISMATCH" => return "参考指纹不匹配",
+                "SUSPICIOUS" => return "参考指纹有待核实",
+                _ => {}
+            }
+        }
         verdict_label(&self.assessment.verdict)
     }
 }

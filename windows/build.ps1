@@ -2,6 +2,11 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location -LiteralPath $projectRoot
 try {
+    $frontend = Join-Path $projectRoot 'frontend'
+    npm.cmd --prefix "$frontend" ci --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend dependency installation failed' }
+    npm.cmd --prefix "$frontend" run build
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend typecheck or build failed' }
     cargo build --locked --release --bin is-gpt-nerfed
     if ($LASTEXITCODE -ne 0) { throw 'Rust build failed' }
     $destination = Join-Path $projectRoot 'dist/IsGPTNerfed-Windows-x64.exe'

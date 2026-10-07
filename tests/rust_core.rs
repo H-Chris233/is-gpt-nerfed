@@ -116,13 +116,20 @@ fn unknown_model_and_single_answer_never_become_confident_mismatch() {
     let outputs: Vec<Output> = serde_json::from_value(cases[0]["outputs"].clone()).unwrap();
     let a = modeltrace::analyze(&outputs, &bank).unwrap();
     assert_eq!(
-        scanner::assess("gpt-6.1-sol", Some(&a), false, &BTreeMap::new()).verdict,
+        scanner::assess("gpt-future-unlisted", Some(&a), false, &BTreeMap::new()).verdict,
         "UNLISTED"
     );
     assert_eq!(
         scanner::assess("gpt-6-astra", Some(&a), false, &BTreeMap::new()).verdict,
         "SUSPICIOUS"
     );
+    let shared = scanner::assess("gpt-6.1-sol", Some(&a), false, &BTreeMap::new());
+    let astra = scanner::assess("gpt-6-astra", Some(&a), false, &BTreeMap::new());
+    assert_eq!(shared.verdict, astra.verdict);
+    assert_eq!(shared.p_expected, astra.p_expected);
+    assert_eq!(shared.margin, astra.margin);
+    assert_eq!(shared.reference_model.as_deref(), Some("gpt-6-astra"));
+    assert!(astra.reference_model.is_none());
     assert_eq!(
         scanner::assess("gpt-6.1-sol", None, false, &BTreeMap::new()).verdict,
         "INVALID"

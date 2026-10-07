@@ -469,6 +469,8 @@ pub struct Verdict {
     pub confidence: Option<String>,
     pub p_expected: Option<f64>,
     pub margin: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_model: Option<String>,
 }
 pub fn assess(
     expected: &str,
@@ -482,6 +484,7 @@ pub fn assess(
         confidence: None,
         p_expected: None,
         margin: None,
+        reference_model: None,
     };
     if hard {
         out.verdict = "DOWNGRADED!".into();
@@ -499,13 +502,15 @@ pub fn assess(
         out.verdict = "UNKNOWN".into();
         return out;
     }
-    let Some(e) = a.results.iter().find(|r| r.model == exp) else {
+    let reference = crate::modeltrace::reference_model(&exp);
+    let Some(e) = a.results.iter().find(|r| r.model == reference) else {
         out.verdict = "UNLISTED".into();
         return out;
     };
+    out.reference_model = (reference != exp).then(|| reference.to_owned());
     out.p_expected = Some(e.probability);
     out.margin = Some(top.score - e.score);
-    if top.model == exp {
+    if top.model == reference {
         out.verdict = "MATCH".into();
         out.confidence = Some(
             if top.probability >= 0.8 {

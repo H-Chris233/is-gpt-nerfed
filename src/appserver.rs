@@ -196,13 +196,13 @@ impl AppServer {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct HookStatus {
     pub checked_at: String,
     pub hooks: Vec<HookInfo>,
     pub notes: Vec<String>,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct HookInfo {
     pub event: String,
     pub enabled: bool,

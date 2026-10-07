@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Nerfed",
+  "version": "0.6.0",
+  "identifier": "com.is-gpt-nerfed.desktop",
+  "build": {
+    "frontendDist": "frontend/dist",
+    "devUrl": "http://127.0.0.1:5173"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-src 'none'",
+      "capabilities": [
+        {
+          "identifier": "main",
+          "windows": ["main"],
+          "permissions": [
+            "core:event:allow-listen", "core:event:allow-unlisten",
+            "core:window:allow-start-dragging", "core:window:allow-start-resize-dragging",
+            "core:window:allow-minimize", "core:window:allow-toggle-maximize", "core:window:allow-internal-toggle-maximize", "core:window:allow-is-maximized", "core:window:allow-close",
+            "allow-get-snapshot", "allow-refresh", "allow-scan-thread", "allow-start-probe", "allow-cancel-probe",
+            "allow-save-settings", "allow-confirm-automatic", "allow-set-companion", "allow-show-main", "allow-open-data-dir", "allow-quit", "allow-window-ready"
+          ]
+        },
+        {
+          "identifier": "companion",
+          "windows": ["companion"],
+          "permissions": [
+            "core:event:allow-listen", "core:event:allow-unlisten", "core:window:allow-start-dragging",
+            "allow-get-snapshot", "allow-set-companion", "allow-show-main", "allow-quit", "allow-window-ready", "allow-companion-layout", "allow-companion-menu"
+          ]
+        }
+      ]
+    }
+  },
+  "bundle": { "active": false, "icon": ["windows/icon.ico", "macos/icon.png"] }
+}
