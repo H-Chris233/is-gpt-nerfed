@@ -228,6 +228,7 @@ impl Evidence {
 #[serde(default)]
 pub struct Scan {
     pub cursor: u64,
+    pub checked_at: Option<String>,
     pub model: Option<String>,
     pub first_model: Option<String>,
     pub effort: Option<String>,
@@ -458,6 +459,7 @@ impl Scan {
             }
             self.cursor += end as u64 + 1;
         }
+        self.checked_at = Some(crate::storage::iso());
         Ok(())
     }
 }

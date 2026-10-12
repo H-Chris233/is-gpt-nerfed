@@ -7,7 +7,7 @@ use crate::{
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs::File,
     sync::{
         Arc, Mutex,
@@ -48,6 +48,7 @@ impl From<&Thread> for Session {
 #[derive(Clone, Serialize)]
 pub struct ScanView {
     pub turns: u64,
+    pub checked_at: Option<String>,
     pub ctx: Option<u64>,
     pub tier: Option<String>,
     pub active: Vec<Evidence>,
@@ -57,6 +58,7 @@ impl From<&Scan> for ScanView {
     fn from(s: &Scan) -> Self {
         Self {
             turns: s.turns,
+            checked_at: s.checked_at.clone(),
             ctx: s.ctx,
             tier: s.tier.clone(),
             active: s.active().into_iter().cloned().collect(),
@@ -83,6 +85,7 @@ pub struct Presence {
     pub label: &'static str,
     pub title: &'static str,
     pub detail: &'static str,
+    pub session_title: String,
     pub model: String,
     pub finished: String,
     pub thread_id: Option<String>,
@@ -96,6 +99,7 @@ impl Default for Presence {
             label: "准备就绪",
             title: "让每一次回答，都有迹可循。",
             detail: "选择一个会话，从模型留下的线索开始观察。",
+            session_title: String::new(),
             model: String::new(),
             finished: String::new(),
             thread_id: None,
@@ -194,6 +198,7 @@ impl Presence {
             label,
             title,
             detail,
+            session_title: String::new(),
             model: p.expected.clone(),
             finished: p.finished.clone(),
             thread_id: p.thread_id.clone(),
@@ -306,7 +311,7 @@ enum Message {
     ),
     Progress(String),
     Loaded(Result<Loaded>),
-    Scanned(Result<(String, Scan)>),
+    Scanned(String, Result<Scan>),
     Probed(Result<Box<Probe>>),
 }
 struct Loaded {
@@ -381,6 +386,7 @@ pub fn launch(
                 rediscover: false,
                 seen: BTreeMap::new(),
                 attempts: BTreeMap::new(),
+                scan_baselines: BTreeSet::new(),
                 effect: Box::new(effect),
                 pending_effects: Vec::new(),
             };
@@ -429,6 +435,7 @@ struct Core {
     rediscover: bool,
     seen: BTreeMap<String, f64>,
     attempts: BTreeMap<String, f64>,
+    scan_baselines: BTreeSet<String>,
     effect: Box<dyn Fn(Effect) + Send>,
     pending_effects: Vec<Effect>,
 }
@@ -660,8 +667,8 @@ impl Core {
         let tx = self.tx.clone();
         let id = thread.id.clone();
         let worker = std::thread::spawn(move || {
-            let result = store.scan(&thread).map(|s| (thread.id, s));
-            let _ = tx.send(Message::Scanned(result));
+            let result = store.scan(&thread);
+            let _ = tx.send(Message::Scanned(thread.id, result));
         });
         self.task = Some(Task {
             cancel: Arc::new(AtomicBool::new(false)),
@@ -727,6 +734,11 @@ impl Core {
                 self.state.threads = s.threads.iter().map(Session::from).collect();
                 self.threads = s.threads;
                 self.state.history = s.history;
+                for (id, scan) in &s.scans {
+                    if !s.scan_errors.contains_key(id) {
+                        self.observe_scan(id, scan);
+                    }
+                }
                 self.state.scans = s
                     .scans
                     .iter()
@@ -746,11 +758,17 @@ impl Core {
                 self.state.error = None;
                 self.state.status = format!("已更新 {} 个用户会话", self.threads.len());
             }
-            Message::Loaded(Err(e)) | Message::Scanned(Err(e)) | Message::Probed(Err(e)) => {
+            Message::Loaded(Err(e)) | Message::Probed(Err(e)) => {
                 self.state.error = Some(format!("{e:#}"));
                 self.state.status = "操作未完成，可以重试".into();
             }
-            Message::Scanned(Ok((id, scan))) => {
+            Message::Scanned(id, Err(e)) => {
+                self.state.scan_errors.insert(id, format!("{e:#}"));
+                self.state.status = "本地日志扫描未完成".into();
+                self.state.error = None;
+            }
+            Message::Scanned(id, Ok(scan)) => {
+                self.observe_scan(&id, &scan);
                 self.state.scan_errors.remove(&id);
                 self.state.scans.insert(id, ScanView::from(&scan));
                 self.state.status = "本地日志扫描已完成".into();
@@ -785,6 +803,46 @@ impl Core {
             }
             Message::Progress(_) | Message::Action(_, _) => {}
         }
+    }
+    fn observe_scan(&mut self, id: &str, scan: &Scan) {
+        // The first successful read establishes a baseline, including newly discovered old sessions.
+        if self.scan_baselines.insert(id.to_owned()) || !self.state.settings.notifications {
+            return;
+        }
+        let Some(previous) = self.state.scans.get(id) else {
+            return;
+        };
+        let new = scan
+            .active()
+            .into_iter()
+            .filter(|e| matches!(e.severity.as_str(), "hard" | "soft"))
+            .filter(|e| {
+                !previous
+                    .evidence
+                    .iter()
+                    .any(|old| old.kind == e.kind && old.detail == e.detail && old.ts == e.ts)
+            })
+            .collect::<Vec<_>>();
+        if new.is_empty() {
+            return;
+        }
+        let label = if new.iter().any(|e| e.severity == "hard") {
+            "发现降级证据"
+        } else {
+            "发现设置变化"
+        };
+        let title = self
+            .threads
+            .iter()
+            .find(|t| t.id == id)
+            .map_or(id, |t| if t.title.is_empty() { id } else { &t.title });
+        self.pending_effects.push(Effect::Notify(format!(
+            "{label} · {title}：{}",
+            new.iter()
+                .map(|e| e.detail.as_str())
+                .collect::<Vec<_>>()
+                .join("；")
+        )));
     }
     fn tick(&mut self) -> bool {
         if self.state.quitting || self.task.is_some() {
@@ -821,17 +879,25 @@ impl Core {
         false
     }
     fn presence(&self) -> Presence {
+        let latest = self.threads.first();
+        let presence = Presence {
+            session_title: latest.map(|t| t.title.clone()).unwrap_or_default(),
+            model: latest.map(|t| t.model.clone()).unwrap_or_default(),
+            thread_id: latest.map(|t| t.id.clone()),
+            ..Presence::default()
+        };
         if self.state.quitting {
             return Presence {
                 mood: "busy",
                 label: "正在退出",
                 title: "正在妥善收好这次观察。",
                 detail: "后台任务和私有进程正在停止。",
-                ..Presence::default()
+                ..presence
             };
         }
         if let Some(task) = &self.state.task
             && task.kind == "probe"
+            && latest.is_some_and(|t| task.thread_id.as_deref() == Some(&t.id))
         {
             return Presence {
                 mood: "busy",
@@ -842,9 +908,7 @@ impl Core {
                 },
                 title: "正在辨认，这一次的指纹。",
                 detail: "通过临时会话生成样本，原会话会保持完整。",
-                model: task.model.clone(),
-                thread_id: task.thread_id.clone(),
-                ..Presence::default()
+                ..presence
             };
         }
         if self.state.error.is_some() {
@@ -853,7 +917,7 @@ impl Core {
                 label: "操作未完成",
                 title: "遇到一点状况，稍后再试。",
                 detail: "具体原因已记录，请查看错误提示。",
-                ..Presence::default()
+                ..presence
             };
         }
         if self.state.last_refreshed.is_none() {
@@ -862,50 +926,132 @@ impl Core {
                 label: "正在连接",
                 title: "准备好，认识你的模型。",
                 detail: "正在读取本地会话与连接状态。",
-                ..Presence::default()
+                ..presence
             };
         }
-        if let Some((id, _)) = self.state.scans.iter().find(|(id, scan)| {
-            !self.state.scan_errors.contains_key(*id)
-                && scan.active.iter().any(|e| e.severity == "hard")
-        }) {
-            let thread = self.threads.iter().find(|t| t.id == *id);
-            return Presence {
-                mood: "alert",
-                label: "发现降级证据",
-                title: "有些变化，需要你留意。",
-                detail: "会话日志中存在仍有效的降级证据，请查看具体变化。",
-                model: thread.map(|t| t.model.clone()).unwrap_or_default(),
-                thread_id: Some(id.clone()),
-                ..Presence::default()
-            };
-        }
-        if let Some(probe) = self.state.history.iter().find(|p| {
-            self.state.account.id != "local"
-                && !p.account_id.is_empty()
-                && p.account_id == self.state.account.id
-        }) {
-            return Presence::from_probe(probe);
-        }
-        if self.binary.is_none() {
+        if latest.is_none() && self.binary.is_none() {
             return Presence {
                 mood: "offline",
                 label: "等待连接",
                 title: "连接 Codex，开始观察。",
                 detail: "安装并登录 Codex，或在偏好设置中指定程序路径。",
-                ..Presence::default()
+                ..presence
             };
         }
-        if !self.state.history.is_empty() {
+        let Some(thread) = latest else {
+            return presence;
+        };
+        let scan_error = self.state.scan_errors.get(&thread.id);
+        let scan = self
+            .state
+            .scans
+            .get(&thread.id)
+            .filter(|_| scan_error.is_none());
+        let passive = scan.and_then(|scan| {
+            ["hard", "soft", "good"]
+                .into_iter()
+                .find(|severity| scan.active.iter().any(|e| e.severity == *severity))
+                .map(|severity| (scan, severity))
+        });
+        if let Some((scan, "hard")) = passive {
+            return self.passive_presence(thread, scan, "hard");
+        }
+        let model = crate::scanner::normalize(&thread.model);
+        let probe = self
+            .state
+            .history
+            .iter()
+            .find(|p| {
+                p.thread_id.as_deref() == Some(&thread.id)
+                    && crate::scanner::normalize(&p.expected) == model
+                    && self.state.account.id != "local"
+                    && !p.account_id.is_empty()
+                    && p.account_id == self.state.account.id
+            })
+            .map(|p| Presence {
+                session_title: presence.session_title.clone(),
+                model: presence.model.clone(),
+                ..Presence::from_probe(p)
+            });
+        if let Some(probe) = &probe
+            && matches!(probe.mood, "alert" | "warning")
+        {
+            return probe.clone();
+        }
+        if let Some((scan, "soft")) = passive {
+            return self.passive_presence(thread, scan, "soft");
+        }
+        if scan_error.is_some() {
+            return Presence {
+                mood: "offline",
+                label: "被动扫描未完成",
+                title: "本地日志，暂时没有读完整。",
+                detail: "会话日志读取失败，请查看具体原因；缓存不代表本次扫描结果。",
+                ..presence
+            };
+        }
+        if let Some(probe) = probe {
+            return probe;
+        }
+        if self.state.history.iter().any(|p| {
+            p.thread_id.as_deref() == Some(&thread.id)
+                && crate::scanner::normalize(&p.expected) == model
+                && (self.state.account.id == "local" || p.account_id != self.state.account.id)
+        }) {
             return Presence {
                 mood: "unknown",
                 label: "结果待核实",
                 title: "换了账户，重新认识一次。",
                 detail: "已有结果属于其他账户或账户未知，不能代表当前账户。",
-                ..Presence::default()
+                ..presence
             };
         }
-        Presence::default()
+        if let Some((scan, "good")) = passive {
+            return self.passive_presence(thread, scan, "good");
+        }
+        if let Some(scan) = scan {
+            return self.passive_presence(thread, scan, "normal");
+        }
+        presence
+    }
+    fn passive_presence(&self, thread: &Thread, scan: &ScanView, severity: &str) -> Presence {
+        let (mood, label, title, detail) = match severity {
+            "hard" => (
+                "alert",
+                "发现降级证据",
+                "有些变化，需要你留意。",
+                "会话日志中存在仍有效的降级证据，请查看具体变化。",
+            ),
+            "soft" => (
+                "warning",
+                "发现设置变化",
+                "本地日志，记录了值得核实的变化。",
+                "会话模型或思考设置发生变化，请确认是否由你主动调整。",
+            ),
+            "good" => (
+                "match",
+                "记录到升级",
+                "本地日志，记录了一次升级。",
+                "当前日志中的升级仍有效；这不代表已验证服务端模型身份。",
+            ),
+            _ => (
+                "idle",
+                "被动观察中",
+                "本地日志，正在持续观察。",
+                "后台空闲时每 30 秒读取本地日志，不消耗额度；未发现变化不代表模型身份已验证。",
+            ),
+        };
+        Presence {
+            mood,
+            label,
+            title,
+            detail,
+            session_title: thread.title.clone(),
+            model: thread.model.clone(),
+            finished: scan.checked_at.clone().unwrap_or_default(),
+            thread_id: Some(thread.id.clone()),
+            ..Presence::default()
+        }
     }
     fn publish(&mut self) {
         self.state.revision += 1;
@@ -957,6 +1103,7 @@ mod tests {
             rediscover: false,
             seen: BTreeMap::from([("session".into(), 123.0)]),
             attempts: BTreeMap::new(),
+            scan_baselines: BTreeSet::new(),
             effect: Box::new(move |effect| {
                 if matches!(effect, Effect::Companion(true)) {
                     observed.store(

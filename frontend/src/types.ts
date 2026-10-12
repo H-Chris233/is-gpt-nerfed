@@ -7,7 +7,7 @@ export interface Session {
   reference_model?: string | null;
 }
 export interface Evidence { ts: string; kind: string; severity: string; detail: string; why?: string }
-export interface Scan { turns: number; ctx: number | null; tier: string | null; active: Evidence[]; evidence: Evidence[] }
+export interface Scan { turns: number; ctx: number | null; tier: string | null; checked_at: string | null; active: Evidence[]; evidence: Evidence[] }
 export interface Candidate { model: string; probability: number; score: number }
 export interface Probe {
   id: string; thread_id: string | null; mode: string; started: string; finished: string;
@@ -19,7 +19,7 @@ export interface Probe {
 }
 export type Mood = 'idle' | 'loading' | 'busy' | 'match' | 'unknown' | 'warning' | 'alert' | 'offline' | 'cancelled';
 export interface Presence {
-  mood: Mood; label: string; title: string; detail: string; model: string; finished: string;
+  mood: Mood; label: string; title: string; detail: string; model: string; finished: string; session_title: string;
   thread_id: string | null; probe_id: string | null;
   reference_model?: string | null;
 }

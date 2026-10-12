@@ -13,6 +13,7 @@ const { snapshot, error, connect, perform } = useDesktop();
 const win = getCurrentWindow();
 const layout = ref<PetLayout>({ expanded: false, chip_x: 0, chip_y: 0 });
 const presence = computed(() => snapshot.value?.presence);
+const sessionTitle = computed(() => presence.value?.session_title || (presence.value?.thread_id ? '未命名会话' : '等待活跃会话'));
 let timer: ReturnType<typeof setTimeout> | undefined;
 let desired = false;
 let changing = false;
@@ -77,9 +78,9 @@ onUnmounted(() => { clearTimer(); unlisten?.(); unscale?.(); });
 <template>
   <div class="pet-shell" :class="{ expanded: layout.expanded, 'chip-right': layout.chip_x > 100 }" :data-mood="presence?.mood || 'loading'" @pointerenter="enter" @pointerleave="leave" @focusin="focusInside" @focusout="leave" @contextmenu.prevent="menu">
     <section v-if="layout.expanded" class="pet-card">
-      <div class="pet-copy"><span class="eyebrow">NERFED <i>/</i> 模型观察</span><h1><i class="status-dot" />{{ presence?.label || '正在连接' }}</h1><p class="pet-model">{{ presence?.model || '等待下一次观察' }}<span v-if="presence?.reference_model"> · 参考 {{ presence.reference_model }}</span></p><p class="pet-time">{{ error || (presence?.finished ? `最近一次 · ${time(presence.finished)}` : presence?.detail) }}</p><button class="pet-open" @click="open">查看详情<Icon name="arrow" :size="14" /></button></div>
+      <div class="pet-copy"><span class="eyebrow" :title="sessionTitle">最近活跃 · {{ sessionTitle }}</span><h1><i class="status-dot" />{{ presence?.label || '正在连接' }}</h1><p class="pet-model">{{ presence?.model || '等待下一次观察' }}<span v-if="presence?.reference_model"> · 参考 {{ presence.reference_model }}</span></p><p class="pet-time">{{ error || (presence?.finished ? `最近检查 · ${time(presence.finished)}` : presence?.detail) }}</p><button class="pet-open" @click="open">查看详情<Icon name="arrow" :size="14" /></button></div>
       <button class="pet-hide icon-button" :class="{ 'below-chip': layout.chip_x > 100 && layout.chip_y < 1 }" aria-label="收起桌宠" title="收起桌宠" @click="perform('set_companion', { visible: false })"><Icon name="close" :size="13" /></button>
     </section>
-    <button class="pet-chip" :style="{ left: `${layout.chip_x}px`, top: `${layout.chip_y}px` }" :aria-label="`桌面芯片：${presence?.label || '正在连接'}。点击查看详情，拖动移动，右键更多操作。`" @pointerdown="down" @pointermove="move" @pointerup="release" @pointercancel="release" @click="chipClick" @focus="enter" @blur="leave"><Chip :mood="presence?.mood || 'loading'" /><i class="pet-status-dot" /></button>
+    <button class="pet-chip" :style="{ left: `${layout.chip_x}px`, top: `${layout.chip_y}px` }" :aria-label="`桌面芯片：${sessionTitle}，${presence?.label || '正在连接'}。点击查看详情，拖动移动，右键更多操作。`" @pointerdown="down" @pointermove="move" @pointerup="release" @pointercancel="release" @click="chipClick" @focus="enter" @blur="leave"><Chip :mood="presence?.mood || 'loading'" /><i class="pet-status-dot" /></button>
   </div>
 </template>
