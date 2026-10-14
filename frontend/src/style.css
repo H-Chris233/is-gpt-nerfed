@@ -26,7 +26,8 @@ button, summary, .session-row { transition: color .15s var(--ease), background .
 [data-mood=unknown], [data-mood=warning], .chip-unknown, .chip-warning { --semantic: var(--warning); --semantic-bg: var(--warning-bg); }
 [data-mood=alert], .chip-alert { --semantic: var(--danger); --semantic-bg: var(--danger-bg); }
 [data-mood=busy], [data-mood=loading], .chip-busy, .chip-loading { --semantic: var(--accent); --semantic-bg: var(--accent-bg); }
-.app-shell { position: relative; display: flex; flex-direction: column; height: 100%; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--shell); }
+/* The native window owns the outer border and corner clipping, including maximized state. */
+.app-shell { position: relative; display: flex; flex-direction: column; height: 100%; overflow: hidden; background: var(--shell); }
 .titlebar { height: 68px; min-height: 68px; display: flex; align-items: center; padding: 0 12px 0 24px; gap: 24px; user-select: none; }
 .wordmark { display: flex; align-items: center; gap: 9px; font-size: 21px; font-weight: 650; letter-spacing: -.9px; color: var(--ink); white-space: nowrap; }
 .brand-mark { height: 28px; width: 28px; display: grid; place-items: center; color: var(--ink); }

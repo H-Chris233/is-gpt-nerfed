@@ -298,10 +298,6 @@ fn build_main(app: &tauri::AppHandle, store: &Store) -> Result<WebviewWindow> {
         .data_directory(store.home.join("webview"))
         .on_navigation(navigation_allowed)
         .build()?;
-    let _ = window.set_effects(tauri::utils::config::WindowEffectsConfig {
-        effects: vec![tauri::utils::WindowEffect::MicaLight],
-        ..Default::default()
-    });
     Ok(window)
 }
 fn show_main_window(app: &tauri::AppHandle) -> Result<()> {
