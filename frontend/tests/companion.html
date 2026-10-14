@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Nerfed · 悬浮窗设计预览</title>
+  <link rel="stylesheet" href="../src/theme.css">
+  <style>
+    body.gallery { margin: 0; background: var(--shell); color: var(--ink); font-family: var(--font-sans); }
+    .gallery main { max-width: 760px; margin: 0 auto; padding: 45px 28px 34px; }
+    .gallery header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 19px; }
+    .gallery header strong { font-size: 21px; letter-spacing: -.8px; }.gallery a { color: var(--accent); font-size: 12px; text-decoration: none; }
+    .gallery h1 { margin: 30px 0 10px; font-size: 33px; font-weight: 600; letter-spacing: -1px; }.gallery p { color: var(--muted); font-size: 12px; line-height: 1.8; margin: 0; }
+    .gallery .hero { margin: 23px 0 25px; padding: 24px; display: flex; justify-content: center; align-items: center; gap: 37px; background: var(--surface-secondary); border: 1px solid var(--line); border-radius: 22px; }
+    .gallery .join { color: var(--faint); font-size: 22px; }.gallery .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(344px, 1fr)); gap: 23px 32px; }
+    .gallery figure { margin: 0; }.gallery figcaption { display: flex; justify-content: space-between; padding: 0 6px 8px; color: var(--muted); font-size: 11px; }.gallery figcaption small { color: var(--faint); font-size: 9px; }
+    .gallery iframe { display: block; width: 344px; height: 184px; border: 0; flex: 0 0 auto; }.gallery iframe.compact { width: 96px; height: 96px; }
+    .gallery footer { margin-top: 26px; padding-top: 15px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; }
+    .gallery fieldset { display: inline-flex; gap: 16px; border: 0; padding: 0; margin: 24px 0 0; color: var(--muted); font-size: 12px; }.gallery label { cursor: pointer; display: flex; gap: 5px; align-items: center; }.gallery input { accent-color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <template id="gallery">
+    <main>
+      <header><strong>nerfed.</strong><a href="./desktop.html">打开主界面 →</a></header>
+      <h1>少一点打扰。多一点清晰。</h1>
+      <p>更简洁的桌面悬浮窗。浅色、深色，或跟随系统。</p>
+      <fieldset aria-label="预览外观"><label><input type="radio" name="preview-theme" value="light">浅色</label><label><input type="radio" name="preview-theme" value="dark">深色</label><label><input type="radio" name="preview-theme" value="system">跟随系统</label></fieldset>
+      <div class="hero">
+        <iframe class="compact" src="?state=idle&collapsed=1" title="收起状态" loading="eager"></iframe><span class="join">↗</span>
+        <iframe src="?state=idle" title="被动观察状态" loading="eager"></iframe>
+      </div>
+      <div class="grid">
+        <figure><figcaption>指纹匹配<small>状态清晰，表达克制</small></figcaption><iframe src="?state=match" title="指纹匹配"></iframe></figure>
+        <figure><figcaption>正在检测<small>仅保留必要的进度提示</small></figcaption><iframe src="?state=busy" title="正在检测"></iframe></figure>
+        <figure><figcaption>发现异常<small>明确展示结论与依据</small></figcaption><iframe src="?state=alert" title="发现异常"></iframe></figure>
+        <figure><figcaption>贴边展开<small>长文本保持可读</small></figcaption><iframe src="?state=long&right=1&bottom=1" title="贴边展开与长文本"></iframe></figure>
+      </div>
+      <footer><span>真实组件 · 模拟状态数据 · 悬停与点击可交互</span><span>96 × 96 / 344 × 184</span></footer>
+    </main>
+  </template>
+  <script type="module">
+    if (new URLSearchParams(location.search).has('state')) {
+      await import('./companion.browser.ts');
+    } else {
+      document.body.className = 'gallery';
+      document.querySelector('#app').replaceWith(document.querySelector('#gallery').content.cloneNode(true));
+      const { appearance, setAppearance } = await import('../src/appearance.ts');
+      const { watch } = await import('vue');
+      const radios = document.querySelectorAll('input[name="preview-theme"]');
+      radios.forEach(radio => radio.addEventListener('change', () => setAppearance(radio.value)));
+      watch(appearance, value => radios.forEach(radio => { radio.checked = radio.value === value; }), { immediate: true });
+    }
+  </script>
+</body>
+</html>

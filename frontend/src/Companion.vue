@@ -8,12 +8,18 @@ import Icon from './Icon.vue';
 import { useDesktop } from './state';
 import { time } from './presentation';
 import type { PetLayout } from './types';
+import './appearance';
+import './companion.css';
 
 const { snapshot, error, connect, perform } = useDesktop();
 const win = getCurrentWindow();
 const layout = ref<PetLayout>({ expanded: false, chip_x: 0, chip_y: 0 });
 const presence = computed(() => snapshot.value?.presence);
 const sessionTitle = computed(() => presence.value?.session_title || (presence.value?.thread_id ? '未命名会话' : '等待活跃会话'));
+const mood = computed(() => error.value ? 'offline' : presence.value?.mood || 'loading');
+const label = computed(() => error.value ? '操作遇到问题' : presence.value?.label || '正在连接');
+const detail = computed(() => error.value || presence.value?.detail || '正在读取本地会话与连接状态。');
+const working = computed(() => mood.value === 'busy' || mood.value === 'loading');
 let timer: ReturnType<typeof setTimeout> | undefined;
 let desired = false;
 let changing = false;
@@ -76,11 +82,21 @@ onUnmounted(() => { clearTimer(); unlisten?.(); unscale?.(); });
 </script>
 
 <template>
-  <div class="pet-shell" :class="{ expanded: layout.expanded, 'chip-right': layout.chip_x > 100 }" :data-mood="presence?.mood || 'loading'" @pointerenter="enter" @pointerleave="leave" @focusin="focusInside" @focusout="leave" @contextmenu.prevent="menu">
-    <section v-if="layout.expanded" class="pet-card">
-      <div class="pet-copy"><span class="eyebrow" :title="sessionTitle">最近活跃 · {{ sessionTitle }}</span><h1><i class="status-dot" />{{ presence?.label || '正在连接' }}</h1><p class="pet-model">{{ presence?.model || '等待下一次观察' }}<span v-if="presence?.reference_model"> · 参考 {{ presence.reference_model }}</span></p><p class="pet-time">{{ error || (presence?.finished ? `最近检查 · ${time(presence.finished)}` : presence?.detail) }}</p><button class="pet-open" @click="open">查看详情<Icon name="arrow" :size="14" /></button></div>
-      <button class="pet-hide icon-button" :class="{ 'below-chip': layout.chip_x > 100 && layout.chip_y < 1 }" aria-label="收起桌宠" title="收起桌宠" @click="perform('set_companion', { visible: false })"><Icon name="close" :size="13" /></button>
+  <div class="pet-shell" :class="{ expanded: layout.expanded, 'chip-right': layout.chip_x > 100, 'chip-bottom': layout.chip_y > 0 }" :data-mood="mood" @pointerenter="enter" @pointerleave="leave" @focusin="focusInside" @focusout="leave" @contextmenu.prevent="menu">
+    <span class="pet-announcement" role="status" aria-live="polite" aria-atomic="true">{{ sessionTitle }}，{{ label }}。{{ detail }}</span>
+    <button class="pet-chip" :style="{ left: `${layout.chip_x}px`, top: `${layout.chip_y}px` }" :aria-label="`桌面芯片：${sessionTitle}，${label}。点击查看详情，拖动移动，右键更多操作。`" @pointerdown="down" @pointermove="move" @pointerup="release" @pointercancel="release" @click="chipClick" @focus="enter" @blur="leave"><Chip :mood="mood" /></button>
+    <section v-if="layout.expanded" class="pet-card" aria-label="会话观测状态">
+      <div class="pet-copy">
+        <div class="pet-session" :title="`最近活跃会话：${sessionTitle}`">{{ sessionTitle }}</div>
+        <h1 :title="label">{{ label }}</h1>
+        <div class="pet-model"><span :title="presence?.model">{{ presence?.model || '等待模型信息' }}</span><span v-if="presence?.reference_model" class="pet-reference" :title="`共享参考：${presence.reference_model}，不代表模型身份相同`">共享参考<Icon name="info" :size="10" /></span></div>
+        <p class="pet-detail" :class="{ 'pet-error': error }" :title="detail" tabindex="0" aria-label="状态说明">{{ detail }}</p>
+      </div>
+      <footer class="pet-footer">
+        <span class="pet-time" :title="presence?.finished ? `最近检查：${presence.finished}` : label"><Icon :name="working ? 'refresh' : 'clock'" :size="11" :class="{ spin: working }" /><template v-if="working">{{ mood === 'loading' ? '建立连接中' : '任务进行中' }}</template><template v-else-if="presence?.finished">{{ time(presence.finished) }} 检查</template><template v-else>等待检查</template></span>
+        <button class="pet-open" @click="open">查看详情<Icon name="chevron" :size="12" /></button>
+      </footer>
+      <button class="pet-hide" aria-label="收起桌宠" title="收起桌宠" @click="perform('set_companion', { visible: false })"><Icon name="close" :size="12" /></button>
     </section>
-    <button class="pet-chip" :style="{ left: `${layout.chip_x}px`, top: `${layout.chip_y}px` }" :aria-label="`桌面芯片：${sessionTitle}，${presence?.label || '正在连接'}。点击查看详情，拖动移动，右键更多操作。`" @pointerdown="down" @pointermove="move" @pointerup="release" @pointercancel="release" @click="chipClick" @focus="enter" @blur="leave"><Chip :mood="presence?.mood || 'loading'" /><i class="pet-status-dot" /></button>
   </div>
 </template>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 withDefaults(defineProps<{ name: string; size?: number }>(), { size: 18 });
 const paths: Record<string, string[]> = {
+  processor: ['M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z', 'M9 9h6v6H9z', 'M9 2v3m6-3v3M9 19v3m6-3v3M2 9h3m-3 6h3M19 9h3m-3 6h3'],
   observe: ['M12 3v3m0 12v3M3 12h3m12 0h3', 'M8 5.1a8 8 0 1 0 10.9 10.9', 'M12 8a4 4 0 1 0 4 4', 'm16 3 1.3 3.7L21 8l-3.7 1.3L16 13l-1.3-3.7L11 8l3.7-1.3L16 3Z'],
   clock: ['M20.5 12a8.5 8.5 0 1 1-2.4-5.9', 'M12 7v5l3 2', 'M20.5 4v5h-5'],
   settings: ['M5 3v6m0 4v8M12 3v10m0 4v4M19 3v2m0 4v12', 'M2.5 9h5v4h-5zM9.5 13h5v4h-5zM16.5 5h5v4h-5z'],
